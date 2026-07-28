@@ -4,11 +4,11 @@ version = "0.1.0"
 description = "Local STT HUD app powered by faster-whisper"
 requires-python = ">=3.14"
 dependencies = [
-    "faster-whisper",
-    "PyQt6",
-    "sounddevice",
-    "numpy",
-    "pynput",
+    "faster-whisper>=1.2.1",
+    "PyQt6>=6.11.0",
+    "sounddevice>=0.5.5",
+    "numpy>=2.5.1",
+    "pynput>=1.8.2",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9.24.0.43",
 ]
