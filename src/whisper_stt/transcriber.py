@@ -21,6 +21,7 @@ from whisper_stt.config import (
     HF_HUB_ETAG_TIMEOUT_SEC,
     MODEL_DIR,
     MODEL_ID,
+    SAMPLE_RATE,
 )
 
 # Bound how long huggingface_hub waits on its "is this the latest revision?"
@@ -233,14 +234,43 @@ class TranscriberEngine:
         return self._model is not None
 
     def warm_up(self) -> None:
-        """Pre-load the model off the calling thread.
+        """Pre-load the model AND run one dummy inference, off the calling
+        thread.
 
-        Call this once from a background thread right after startup so the
-        model is likely already resident by the time the user finishes their
-        first utterance, without delaying tray-icon startup itself.
+        Call this once from a background thread right after startup so both
+        are likely done by the time the user finishes their first utterance,
+        without delaying tray-icon startup itself.
+
+        Loading the weights (_get_model()) alone isn't enough to absorb the
+        real first-run cost: CTranslate2 only touches the cuBLAS/cuDNN DLLs
+        (~2GB combined, under .venv/Lib/site-packages/nvidia) on the first
+        actual GEMM/conv call, not at model construction. Right after a
+        Windows boot those DLLs are cold on disk (and re-scanned by Windows
+        Defender, since .venv isn't a trusted path) — measured ~17s for that
+        first real inference on this machine, even though model load itself
+        stayed ~3s. A plain zeros buffer runs the exact same kernels a real
+        utterance would, so this pays that cost here instead of on the
+        user's first sentence. Every launch after the first-post-boot one
+        finds the DLLs already in the OS page cache and this dummy call
+        finishes in well under a second.
         """
         with self._lock:
-            self._get_model()
+            model = self._get_model()
+            if model is None:
+                return
+            try:
+                dummy_audio = np.zeros(SAMPLE_RATE, dtype=np.float32)  # 1s of silence
+                segments, _ = model.transcribe(
+                    dummy_audio,
+                    language="ko",
+                    task="transcribe",
+                    beam_size=1,
+                    vad_filter=False,
+                    without_timestamps=True,
+                )
+                list(segments)  # force the lazy generator to actually run
+            except Exception:
+                logger.exception("Warm-up dummy inference failed (non-fatal)")
 
     def _get_model(self) -> WhisperModel | None:
         """Lazy load the model, with CUDA→CPU fallback.
