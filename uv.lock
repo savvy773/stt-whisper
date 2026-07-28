@@ -680,11 +680,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "faster-whisper" },
-    { name = "numpy" },
+    { name = "faster-whisper", specifier = ">=1.2.1" },
+    { name = "numpy", specifier = ">=2.5.1" },
     { name = "nvidia-cublas-cu12", specifier = ">=12.9.2.10" },
     { name = "nvidia-cudnn-cu12", specifier = ">=9.24.0.43" },
-    { name = "pynput" },
-    { name = "pyqt6" },
-    { name = "sounddevice" },
+    { name = "pynput", specifier = ">=1.8.2" },
+    { name = "pyqt6", specifier = ">=6.11.0" },
+    { name = "sounddevice", specifier = ">=0.5.5" },
 ]
