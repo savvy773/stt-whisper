@@ -1,0 +1,32 @@
+[project]
+name = "whisper-stt"
+version = "0.1.0"
+description = "Local STT HUD app powered by faster-whisper"
+requires-python = ">=3.14"
+dependencies = [
+    "faster-whisper",
+    "PyQt6",
+    "sounddevice",
+    "numpy",
+    "pynput",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9.24.0.43",
+]
+
+[project.scripts]
+whisper-stt = "whisper_stt.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/whisper_stt"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pyright]
+pythonVersion = "3.14"
+venvPath = "."
+venv = ".venv"
