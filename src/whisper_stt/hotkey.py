@@ -91,6 +91,13 @@ class HotkeyManager:
             )
             if key in parsed_keys
         }
+        # The combo's non-modifier key(s) (e.g. Space), by virtual-key code —
+        # see the GetAsyncKeyState re-check below for why these are verified
+        # too, not just the modifiers.
+        required_main_vks = {
+            key.vk for key in parsed_keys
+            if isinstance(key, keyboard.KeyCode) and key.vk is not None
+        }
 
         def _on_trigger():
             # pynput's own HotKey.press() fires as soon as this combo's
@@ -110,6 +117,19 @@ class HotkeyManager:
                 logger.debug(
                     "Hotkey chord matched but extra/missing modifiers held (%s != %s) — ignoring.",
                     held, required_mods,
+                )
+                return
+            # Windows swallows the key-up for Win when it's used in a
+            # system-reserved shortcut (e.g. Win+Plus/Minus for Magnifier),
+            # so pynput's internal press-state can be left thinking Win (and
+            # whatever combo used it last) is still held, and a later
+            # unrelated key then spuriously completes this combo. The
+            # modifier re-check above can't catch this on its own since Win
+            # may still be genuinely down; also confirm the combo's actual
+            # non-modifier key (e.g. Space) is physically down right now.
+            if required_main_vks and not all(_is_down(vk) for vk in required_main_vks):
+                logger.debug(
+                    "Hotkey chord matched but main key not physically down — ignoring spurious trigger.",
                 )
                 return
             logger.info("Global hotkey triggered!")
