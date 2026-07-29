@@ -1,6 +1,6 @@
 # 🎙️ Whisper STT (`stt-whisper`)
 
-> **Local, GPU-accelerated speech-to-text dictation utility for Windows.**  
+> **Local, GPU-accelerated speech-to-text dictation utility for Windows.**
 > Press a global hotkey anywhere, speak in Korean or English, and watch your words get transcribed on-device and typed directly into your focused application window.
 
 ---
@@ -130,3 +130,6 @@ stt-whisper/
 ## 📄 License
 
 This project is open source and available under the [MIT License](LICENSE).
+
+
+
