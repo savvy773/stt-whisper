@@ -25,7 +25,7 @@ wheels/
 
 # User data & settings
 settings.json
-blacklist.json
+blacklist.txt
 logs/
 *.log
 docs/instruction.md
