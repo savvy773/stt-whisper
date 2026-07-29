@@ -811,10 +811,10 @@ def main() -> None:
     def _open_blacklist() -> None:
         try:
             if not BLACKLIST_PATH.exists():
-                BLACKLIST_PATH.write_text("[]\n", encoding="utf-8")
+                BLACKLIST_PATH.write_text("", encoding="utf-8")
             subprocess.Popen(["notepad.exe", str(BLACKLIST_PATH)])
         except OSError:
-            log.exception("Failed to open blacklist.json in Notepad")
+            log.exception("Failed to open blacklist.txt in Notepad")
 
     blacklist_act.triggered.connect(_open_blacklist)
 
