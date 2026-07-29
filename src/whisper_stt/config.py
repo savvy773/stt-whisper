@@ -81,13 +81,14 @@ MODEL_ID = "deepdml/faster-whisper-large-v3-turbo-ct2"
 APP_DIR = Path(__file__).resolve().parents[2]
 SETTINGS_PATH = APP_DIR / "settings.json"
 
-# User-editable hallucination blocklist — JSON array of strings, hand-edited
-# directly (no restart needed, transcriber.py hot-reloads on mtime change).
+# User-editable hallucination blocklist — hand-edited directly (no restart
+# needed, transcriber.py hot-reloads on mtime change). Plain text, one phrase
+# per line — no brackets/quotes/commas needed.
 # Separate from HALLUCINATION_PHRASES above because that list is a code
 # constant tuned for hallucinations common across installs; this one is for
 # phrases specific to this mic/room/model that only show up on this machine
 # (e.g. "아멘") — adding one here doesn't need a code change or PR.
-BLACKLIST_PATH = APP_DIR / "blacklist.json"
+BLACKLIST_PATH = APP_DIR / "blacklist.txt"
 
 # Cache downloaded model weights under the project folder instead of the
 # global ~/.cache/huggingface — keeps the app self-contained and survives a
