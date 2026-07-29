@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 import gc
-import json
 import logging
 import os
 from pathlib import Path
@@ -65,9 +64,10 @@ def _normalize_for_hallucination_check(text: str) -> str:
 _HALLUCINATION_SET = frozenset(_normalize_for_hallucination_check(p) for p in HALLUCINATION_PHRASES)
 
 # mtime-cached loader for BLACKLIST_PATH (see config.py) — a user-hand-edited
-# JSON array of extra phrases to drop, same exact-match semantics as
-# _HALLUCINATION_SET. Re-parsed only when the file's mtime changes so calling
-# this once per transcribe() stays a single cheap stat() in the common case.
+# plain-text list of extra phrases to drop, one per line, same exact-match
+# semantics as _HALLUCINATION_SET. Re-parsed only when the file's mtime
+# changes so calling this once per transcribe() stays a single cheap stat()
+# in the common case.
 _user_blacklist_cache: dict[str, Any] = {"mtime": None, "set": frozenset()}
 
 
@@ -76,7 +76,7 @@ def _load_user_blacklist() -> frozenset[str]:
         mtime = BLACKLIST_PATH.stat().st_mtime
     except OSError:
         try:
-            BLACKLIST_PATH.write_text("[]\n", encoding="utf-8")
+            BLACKLIST_PATH.write_text("", encoding="utf-8")
         except OSError:
             pass
         return frozenset()
@@ -85,16 +85,15 @@ def _load_user_blacklist() -> frozenset[str]:
         return _user_blacklist_cache["set"]
 
     try:
-        entries = json.loads(BLACKLIST_PATH.read_text(encoding="utf-8"))
-        if not isinstance(entries, list):
-            raise ValueError("blacklist.json must be a JSON array of strings")
-        normalized = frozenset(
-            _normalize_for_hallucination_check(p) for p in entries if isinstance(p, str) and p.strip()
-        )
-    except (OSError, ValueError, json.JSONDecodeError) as e:
-        logger.error("Failed to load blacklist.json (%s) — treating as empty until fixed", e)
-        normalized = frozenset()
+        raw = BLACKLIST_PATH.read_text(encoding="utf-8")
+    except OSError as e:
+        logger.error("Failed to read blacklist.txt (%s) — treating as empty until fixed", e)
+        raw = ""
 
+    # Strip stray brackets/quotes/commas in case old JSON-style entries are
+    # still lying around from before this was a plain-text file.
+    phrases = [line.strip().strip(",").strip("\"'`[]").strip() for line in raw.splitlines()]
+    normalized = frozenset(_normalize_for_hallucination_check(p) for p in phrases if p.strip())
     _user_blacklist_cache["mtime"] = mtime
     _user_blacklist_cache["set"] = normalized
     return normalized
@@ -362,7 +361,7 @@ class TranscriberEngine:
                 )
 
                 # Loaded once per transcribe() call (not per segment) — a
-                # single stat() in the common case where blacklist.json
+                # single stat() in the common case where blacklist.txt
                 # hasn't changed since the last call.
                 user_blacklist = _load_user_blacklist()
 
