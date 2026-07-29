@@ -337,12 +337,12 @@ class SettingsDialog(QDialog):
                     break
 
     def _open_blacklist(self) -> None:
-        """Open blacklist.json in Notepad, creating it first if this is a
+        """Open blacklist.txt in Notepad, creating it first if this is a
         fresh install that has never transcribed (transcriber.py otherwise
         only creates the file lazily on first hallucination-filter check)."""
         try:
             if not BLACKLIST_PATH.exists():
-                BLACKLIST_PATH.write_text("[]\n", encoding="utf-8")
+                BLACKLIST_PATH.write_text("", encoding="utf-8")
             subprocess.Popen(["notepad.exe", str(BLACKLIST_PATH)])
         except OSError:
-            self._log.exception("Failed to open blacklist.json in Notepad")
+            self._log.exception("Failed to open blacklist.txt in Notepad")
