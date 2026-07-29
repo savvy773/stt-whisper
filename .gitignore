@@ -45,6 +45,7 @@ models/
 # OS generated
 .DS_Store
 Thumbs.db
+*.lnk
 
 # git_commit.ps1 auto-ignore (regenerable caches/deps only)
 node_modules
