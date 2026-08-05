@@ -112,6 +112,7 @@ class AudioCapture:
         self.stream: sd.InputStream | None = None
         self.is_recording = False
         self._audio_buffer: list[np.ndarray] = []
+        self._callback_error_count = 0
 
         self.on_audio_data: Callable[[np.ndarray], None] | None = None
         self.on_volume_level: Callable[[float], None] | None = None
@@ -167,20 +168,33 @@ class AudioCapture:
         if status:
             logger.warning("Audio stream status: %s", status)
 
-        # Convert multi-channel (stereo) to mono if needed
-        if indata.ndim > 1 and indata.shape[1] > 1:
-            chunk = np.mean(indata, axis=1)
-        else:
-            chunk = indata[:, 0]
+        try:
+            # Convert multi-channel (stereo) to mono if needed
+            if indata.ndim > 1 and indata.shape[1] > 1:
+                chunk = np.mean(indata, axis=1)
+            else:
+                chunk = indata[:, 0]
 
-        self._audio_buffer.append(chunk.copy())
+            self._audio_buffer.append(chunk.copy())
 
-        rms = float(np.sqrt(np.mean(chunk**2)))
-        if self.on_volume_level:
-            self.on_volume_level(rms)
+            rms = float(np.sqrt(np.mean(chunk**2)))
+            if self.on_volume_level:
+                self.on_volume_level(rms)
 
-        if self.on_audio_data:
-            self.on_audio_data(chunk)
+            if self.on_audio_data:
+                self.on_audio_data(chunk)
+        except Exception:
+            # sounddevice registers this callback with error=paAbort (see
+            # its cffi trampoline): any uncaught exception here — not just
+            # ones we raise on purpose — permanently aborts the PortAudio
+            # stream with no exception reaching sys.excepthook (this runs
+            # on PortAudio's own C thread) and no further callbacks ever
+            # again, i.e. a silently dead mic. Log once, not every call —
+            # this fires ~100x/sec, so a recurring error would otherwise
+            # turn into a disk-I/O storm.
+            self._callback_error_count += 1
+            if self._callback_error_count == 1:
+                logger.exception("Audio callback error (suppressing repeats)")
 
     def start(self) -> None:
         if self.is_recording:
@@ -188,6 +202,7 @@ class AudioCapture:
 
         self._audio_buffer.clear()
         self.silence_detector.reset()
+        self._callback_error_count = 0
 
         try:
             self.stream = sd.InputStream(
@@ -211,11 +226,16 @@ class AudioCapture:
         try:
             self.stream.stop()
             self.stream.close()
-            self.stream = None
-            self.is_recording = False
-            logger.info("Stopped mic capture.")
         except Exception as e:
             logger.error("Failed to stop audio stream: %s", e)
+        finally:
+            # Always clear state even if stop()/close() raised (e.g. the
+            # stream was already aborted by PortAudio) — otherwise
+            # is_recording stays stuck True and every future start() call
+            # silently no-ops forever.
+            self.stream = None
+            self.is_recording = False
+        logger.info("Stopped mic capture.")
 
     def get_recorded_audio(self) -> list[np.ndarray]:
         """Return the raw recorded chunks (call after stop()).

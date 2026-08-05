@@ -61,6 +61,33 @@ def _normalize_for_hallucination_check(text: str) -> str:
     return _PUNCT_RE.sub("", text).lower()
 
 
+def _prewarm_dll_cache() -> None:
+    """Force the OS page cache and Windows Defender's on-access-scan cache
+    to warm up for the cuBLAS/cuDNN DLLs before CTranslate2 loads them.
+
+    CTranslate2 loads these DLLs via LoadLibrary from inside a pybind11
+    call that never releases the GIL, so a cold-disk read there stalls
+    every other Python thread — including the Qt GUI thread — for as long
+    as the read takes. A plain Python file read hits the same disk blocks
+    and the same Defender on-access hook, but CPython releases the GIL
+    around the underlying read syscall, so doing the cold read here first
+    pays that cost without blocking the GUI. See warm_up() below.
+    """
+    if sys.platform != "win32":
+        return
+    for site_dir in dict.fromkeys(sys.path):
+        nvidia_path = Path(site_dir) / "nvidia"
+        if not nvidia_path.exists():
+            continue
+        for dll_path in nvidia_path.rglob("*.dll"):
+            try:
+                with open(dll_path, "rb") as f:
+                    while f.read(4 * 1024 * 1024):
+                        pass
+            except OSError:
+                pass
+
+
 _HALLUCINATION_SET = frozenset(_normalize_for_hallucination_check(p) for p in HALLUCINATION_PHRASES)
 
 # mtime-cached loader for BLACKLIST_PATH (see config.py) — a user-hand-edited
@@ -236,6 +263,13 @@ class TranscriberEngine:
         """Pre-load the model AND run one dummy inference, off the calling
         thread.
 
+        Calls _prewarm_dll_cache() first (see below) so the cold-disk /
+        Defender-rescan cost described here lands on a GIL-releasing plain
+        file read instead of on the GIL-holding CTranslate2 load call —
+        otherwise that cost freezes the Qt GUI thread solid (HUD included)
+        for the same ~17s, which is exactly what made the equalizer
+        occasionally lock up on the first launch after a Windows reboot.
+
         Call this once from a background thread right after startup so both
         are likely done by the time the user finishes their first utterance,
         without delaying tray-icon startup itself.
@@ -253,6 +287,7 @@ class TranscriberEngine:
         finds the DLLs already in the OS page cache and this dummy call
         finishes in well under a second.
         """
+        _prewarm_dll_cache()
         with self._lock:
             model = self._get_model()
             if model is None:
