@@ -1,6 +1,7 @@
 """High-fidelity audio capture with smart mic selection and precise 16kHz resampling."""
 
 import logging
+import time
 from typing import Callable
 
 import numpy as np
@@ -36,6 +37,7 @@ class SilenceDetector:
         self.threshold_rms = threshold_rms
         self.threshold_sec = threshold_sec
         self.sample_rate = sample_rate
+        self.max_wait_sec = max_wait_sec
         self.silence_frames_threshold = int(threshold_sec * sample_rate)
         self.max_wait_frames = int(max_wait_sec * sample_rate)
         self.current_silence_frames = 0
@@ -88,6 +90,15 @@ class SilenceDetector:
         self.threshold_sec = seconds
         self.silence_frames_threshold = int(seconds * self.sample_rate)
 
+    def set_sample_rate(self, sample_rate: int) -> None:
+        """Recompute frame thresholds after the capture device's sample
+        rate changes (e.g. AudioCapture.restart() re-discovers a
+        different device) — the frame counts above are only valid for the
+        rate they were computed against."""
+        self.sample_rate = sample_rate
+        self.silence_frames_threshold = int(self.threshold_sec * sample_rate)
+        self.max_wait_frames = int(self.max_wait_sec * sample_rate)
+
     def is_silent(self) -> bool:
         """Whether the current silence run has already crossed the active
         cutoff (mirrors the condition inside feed(), without consuming a
@@ -113,6 +124,7 @@ class AudioCapture:
         self.is_recording = False
         self._audio_buffer: list[np.ndarray] = []
         self._callback_error_count = 0
+        self._last_callback_ts = 0.0
 
         self.on_audio_data: Callable[[np.ndarray], None] | None = None
         self.on_volume_level: Callable[[float], None] | None = None
@@ -165,6 +177,12 @@ class AudioCapture:
             self.device_sample_rate = 44100
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info: dict, status: sd.CallbackFlags) -> None:
+        # Recorded regardless of what follows — this alone proves the
+        # stream is still alive, which is what the health-check watchdog
+        # in main.py relies on to tell "dead stream" apart from "no one's
+        # talking right now".
+        self._last_callback_ts = time.monotonic()
+
         if status:
             logger.warning("Audio stream status: %s", status)
 
@@ -196,13 +214,20 @@ class AudioCapture:
             if self._callback_error_count == 1:
                 logger.exception("Audio callback error (suppressing repeats)")
 
-    def start(self) -> None:
+    def start(self) -> bool:
+        """Open and start the input stream. Returns whether it's actually
+        recording afterward — callers must check this instead of assuming
+        success, since a transient device-open failure (e.g. WASAPI not
+        ready yet right after a fresh Windows boot) used to be silently
+        swallowed here while the caller went on to show a normal
+        "Listening…" HUD with a dead mic behind it."""
         if self.is_recording:
-            return
+            return True
 
         self._audio_buffer.clear()
         self.silence_detector.reset()
         self._callback_error_count = 0
+        self._last_callback_ts = time.monotonic()
 
         try:
             self.stream = sd.InputStream(
@@ -215,9 +240,32 @@ class AudioCapture:
             self.stream.start()
             self.is_recording = True
             logger.info("Started mic capture on '%s' (%d Hz)", self.device_name, self.device_sample_rate)
+            return True
         except Exception as e:
             logger.error("Failed to start audio stream on device %s: %s", self.device_index, e)
+            self.stream = None
             self.is_recording = False
+            return False
+
+    def restart(self) -> bool:
+        """Recover a stalled/dead stream: close it, re-discover the input
+        device (in case it was replugged, or wasn't ready yet — the same
+        fresh-boot timing this whole file is trying to be resilient to),
+        resync the silence detector to any sample-rate change, and reopen.
+        """
+        logger.warning("Restarting audio stream (recovery)")
+        self.stop()
+        self._discover_best_microphone()
+        self.silence_detector.set_sample_rate(self.device_sample_rate)
+        return self.start()
+
+    def seconds_since_last_callback(self) -> float:
+        """How long since the PortAudio callback last fired. Only
+        meaningful while is_recording — 0.0 otherwise so callers don't
+        mistake "never started" for "just stalled"."""
+        if not self.is_recording:
+            return 0.0
+        return time.monotonic() - self._last_callback_ts
 
     def stop(self) -> None:
         if not self.is_recording or self.stream is None:

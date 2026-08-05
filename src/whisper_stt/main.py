@@ -28,6 +28,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -217,6 +218,7 @@ class _AppState:
     session_active: bool = False
     worker: _TranscribeWorker | None = None
     eq_phase: float = 0.0
+    last_heartbeat: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +346,13 @@ def main() -> None:
             return
         input_ctrl.capture_target_window()
         audio_bridge.reset()
-        audio.start()
+        if not audio.start():
+            # Transient open failure (e.g. WASAPI device not ready yet
+            # right after a fresh Windows boot) — one re-discovery +
+            # retry instead of silently showing "Listening…" over a dead
+            # mic, which is what happened before audio.start() reported
+            # its result at all.
+            audio.restart()
         overlay.set_state("speaking")
         log.info("Listening started")
 
@@ -596,6 +604,57 @@ def main() -> None:
             _stop_and_transcribe()
 
     audio_bridge.silence_detected.connect(_on_silence)
+
+    # ------------------------------------------------------------------ #
+    # Stability watchdogs
+    # ------------------------------------------------------------------ #
+
+    _STREAM_STALL_SEC = 2.0
+
+    def _check_audio_health() -> None:
+        """Self-heal a stream PortAudio silently killed (device unplug,
+        driver reset, etc.) — a dead InputStream never raises anything on
+        the Qt side, so without this the mic (and the equalizer) would
+        just stay dead until the user notices and restarts the whole app.
+        Only acts while actively listening between utterances (never with
+        a transcription in flight), so a legitimate pause can't be
+        mistaken for a dead stream and made to blow away the buffer via
+        restart()'s start()."""
+        if overlay.state != "speaking" or state.worker is not None:
+            return
+        if audio.is_recording and audio.seconds_since_last_callback() > _STREAM_STALL_SEC:
+            log.warning(
+                "Audio stream stalled (%.1fs since last callback) — restarting",
+                audio.seconds_since_last_callback(),
+            )
+            audio_bridge.reset()
+            audio.restart()
+
+    _audio_watchdog = QTimer()
+    _audio_watchdog.setInterval(1000)
+    _audio_watchdog.timeout.connect(_check_audio_health)
+    _audio_watchdog.start()
+
+    _HEARTBEAT_INTERVAL_SEC = 1.0
+
+    def _gui_heartbeat() -> None:
+        """Diagnostic only: this timer runs on the Qt GUI thread, so a gap
+        much bigger than the interval means something on this thread (e.g.
+        a GIL-holding native call from a background thread — see
+        transcriber._prewarm_dll_cache for the case that motivated this)
+        stalled the whole event loop, HUD included. Logs only on a real
+        gap so this stays a signal, not per-tick noise."""
+        now = time.monotonic()
+        if state.last_heartbeat:
+            gap = now - state.last_heartbeat
+            if gap > _HEARTBEAT_INTERVAL_SEC * 2:
+                log.warning("GUI thread stalled for %.1fs", gap)
+        state.last_heartbeat = now
+
+    _heartbeat_timer = QTimer()
+    _heartbeat_timer.setInterval(int(_HEARTBEAT_INTERVAL_SEC * 1000))
+    _heartbeat_timer.timeout.connect(_gui_heartbeat)
+    _heartbeat_timer.start()
 
     # ------------------------------------------------------------------ #
     # Overlay UI signals → settings persistence
