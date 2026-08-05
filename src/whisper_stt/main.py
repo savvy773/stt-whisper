@@ -57,15 +57,28 @@ _LOGS_DIR.mkdir(parents=True, exist_ok=True)
 _APP_LOG_PATH = _LOGS_DIR / "app.log"
 
 _file_handler = logging.handlers.RotatingFileHandler(
-    _APP_LOG_PATH, maxBytes=2_000_000, backupCount=2, encoding="utf-8"
+    _APP_LOG_PATH, maxBytes=2_000_000, backupCount=4, encoding="utf-8"
 )
 _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)-5s] %(name)s: %(message)s"))
+_file_handler.setLevel(logging.DEBUG)
+
+# Root logger stays DEBUG so every logger.debug() call in the codebase
+# (mic RMS/resample details, hotkey edge cases, overlay state transitions,
+# per-utterance transcription timing) actually reaches a handler instead
+# of being dropped before it's even built — these are exactly the
+# breadcrumbs needed to diagnose the *next* one-off freeze/glitch after
+# the fact, and none of them fire per-audio-frame, so volume stays low.
+# The console handler is kept at INFO — irrelevant for the packaged .pyw
+# (no attached console), but keeps `python -m whisper_stt.main` runs from
+# a terminal readable during interactive debugging.
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(logging.INFO)
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)-5s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(), _file_handler]
+    handlers=[_console_handler, _file_handler]
 )
 log = logging.getLogger("whisper_stt")
 
